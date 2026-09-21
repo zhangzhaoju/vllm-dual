@@ -1,0 +1,3 @@
+[submodule "csrc/third_party/catlass"]
+	path = ascend/csrc/third_party/catlass
+	url = https://gitcode.com/cann/catlass.git

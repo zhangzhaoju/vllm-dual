@@ -127,7 +127,7 @@ def test_failed_cold_receive_then_ascend_store_completion_does_not_crash():
     # even when it has no outstanding store job. This is a distinct send fence.
     ns = {}
     load_methods(
-        ROOT.parent / "LMCache-Ascend/lmcache_ascend/v1/cache_engine.py",
+        ROOT.parent / "LMCache/ascend/lmcache_ascend/v1/cache_engine.py",
         {"get_finished_stores"},
         ns,
     )

@@ -1,9 +1,14 @@
-include LICENSE
-include requirements/common.txt
-include requirements/cuda.txt
-include requirements/rocm.txt
-include requirements/cpu.txt
-include CMakeLists.txt
-
-recursive-include cmake *
+include LICENSE README.md pyproject.toml setup.py p1_build.py CMakeLists.txt .gitmodules
+include requirements/ascend.txt requirements/build.txt
+graft vllm
+graft ascend
 recursive-include csrc *
+recursive-include cmake *
+global-exclude __pycache__ *.pyc *.pyo
+global-exclude .git
+prune build
+prune dist
+prune ascend/.git
+prune ascend/build
+prune ascend/output
+prune ascend/.deps

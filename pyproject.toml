@@ -1,14 +1,15 @@
 [build-system]
 # Should be mirrored in requirements/build.txt
 requires = [
+    "setuptools>=77.0.3,<81.0.0",
+    "wheel",
     "cmake>=3.26.1",
     "ninja",
     "packaging>=24.2",
-    "setuptools>=77.0.3,<81.0.0",
-    "setuptools-scm>=8.0",
-    "torch == 2.9.0",
-    "wheel",
+    "pybind11",
     "jinja2",
+    "torch==2.9.0",
+    "torch-npu==2.9.0.post1+gitee7ba04",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -16,22 +17,20 @@ build-backend = "setuptools.build_meta"
 name = "vllm"
 authors = [{name = "vLLM Team"}]
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "ascend/LICENSE"]
 readme = "README.md"
 description = "A high-throughput and memory-efficient inference and serving engine for LLMs"
 classifiers = [
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
-requires-python = ">=3.10,<3.14"
-dynamic = [ "version", "dependencies", "optional-dependencies"]
+requires-python = ">=3.11,<3.12"
+version = "0.18.0+ascend.p1"
+dynamic = ["dependencies"]
 
 [project.urls]
 Homepage="https://github.com/vllm-project/vllm"
@@ -41,16 +40,17 @@ Slack="https://slack.vllm.ai/"
 [project.scripts]
 vllm = "vllm.entrypoints.cli.main:main"
 
+[project.entry-points."vllm.platform_plugins"]
+ascend = "vllm_ascend:register"
+
 [project.entry-points."vllm.general_plugins"]
+ascend_kv_connector = "vllm_ascend:register_connector"
+ascend_model_loader = "vllm_ascend:register_model_loader"
+ascend_service_profiling = "vllm_ascend:register_service_profiling"
 lora_filesystem_resolver = "vllm.plugins.lora_resolvers.filesystem_resolver:register_filesystem_resolver"
 lora_hf_hub_resolver = "vllm.plugins.lora_resolvers.hf_hub_resolver:register_hf_hub_resolver"
 
-[tool.setuptools_scm]
-# no extra settings needed, presence enables setuptools-scm
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["vllm*"]
 
 [tool.ruff.lint.per-file-ignores]
 "vllm/third_party/**" = ["ALL"]
