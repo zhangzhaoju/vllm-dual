@@ -27,4 +27,7 @@ installers=(output/CANN-custom_ops*.run)
     echo "Expected exactly one freshly built custom-op installer" >&2
     exit 2
 }
-bash "${installers[0]}" --install-path="$ROOT_DIR/vllm_ascend/_cann_ops_custom"
+# The private source copy contains only csrc, not the package directory.
+INSTALL_DIR="$ROOT_DIR/vllm_ascend/_cann_ops_custom"
+mkdir -p -- "$INSTALL_DIR"
+bash "${installers[0]}" --install-path="$INSTALL_DIR"
