@@ -679,13 +679,13 @@ def _validate_dsa_scratch_capacity(
         {int(value) for value in request_rows if int(value) >= 0}
     ):
         rows = np.flatnonzero(request_rows == request_index)
-        if rows.size * width > capacity:
+        request_boundaries = boundaries[rows]
+        if np.count_nonzero(request_boundaries) * width > capacity:
             raise RuntimeError(
                 "DSA request-union scratch reservation is too small: "
                 f"request={request_index}, rows={rows.size}, "
                 f"index_topk={width}, scratch_capacity={capacity}."
             )
-        request_boundaries = boundaries[rows]
         if np.any(
             (request_boundaries != 0)
             & (request_boundaries < capacity)
@@ -1521,20 +1521,27 @@ class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
                             self.decode_threshold
                             if common_attn_metadata.attn_state
                             == AscendAttentionState.SpecDecoding
-                            else 1
+                            else (
+                                1
+                                if common_attn_metadata.attn_state == AscendAttentionState.DecodeOnly
+                                else common_attn_metadata.max_query_len
+                            )
                         )
+                        # Prompt-only recovery may have no draft token. Native
+                        # prefill can also include longer history recomputation.
+                        # Both require the actual restored frontier to match.
                         if (
-                            e - s != expected_width
+                            not 1 <= e - s <= expected_width
                             or int(computed[r]) != expected_end
                         ):
                             raise RuntimeError(
                                 "Invalid cold-compact resume layout: "
                                 f"request={r}, rows={e - s}, prompt={plen}, "
                                 f"computed={int(computed[r])}, "
-                                f"expected_rows={expected_width}."
+                                f"allowed_rows=1..{expected_width}."
                             )
-                        # The first real row recomputes the final prompt token;
-                        # later rows validate speculative tokens.  Every one of
+                        # The first row processes the pending history token;
+                        # any later rows validate speculative tokens. Every one of
                         # them consumes sparse prefix KV and must participate in
                         # compact retrieval/remapping.  Treating the first row
                         # as padding leaves it reading stale scratch contents.
@@ -3723,14 +3730,10 @@ class AscendSFAImpl(MLAAttentionImpl):
                     "staged SFA producer event was not created by eager "
                     "warmup"
                 )
-            producer_event = torch.npu.ExternalEvent()
+            producer_event = torch.npu.Event()
+            # Materialize the handle in eager warmup, never inside capture.
+            producer_event.record()
             state.producer_event = producer_event
-        else:
-            # ExternalEvent is the graph-visible fence consumed by LMCache
-            # between Graph A and Graph B.  Reset before each captured/replayed
-            # producer interval, then record only after every bridge output is
-            # stable.
-            producer_event.reset()
         initialized_capacity = state.initialized_cache_capacity
         if is_dummy and graph_key.request_capacity > initialized_capacity:
             for cache in kv_cache:
@@ -3824,8 +3827,6 @@ class AscendSFAImpl(MLAAttentionImpl):
             hidden_states,
             outputs,
         )
-        attn_metadata.reshape_cache_event = producer_event
-        producer_event.record()
         state.runtime = (
             layer_name,
             kv_cache,
@@ -4237,8 +4238,13 @@ class AscendSFAImpl(MLAAttentionImpl):
             state = self._staged_sfa_capture_state
             index_enabled = bool(state.runtime and state.runtime[3])
             producer_event = state.producer_event
-            if producer_event is not None:
-                attn_metadata.reshape_cache_event = producer_event
+            if producer_event is None:
+                raise RuntimeError("staged SFA producer event was not initialized by eager warmup")
+            # Graph A replays on the current stream. Record outside capture on
+            # every handoff; an ExternalEvent recorded inside Graph A cannot
+            # refresh host wait bookkeeping on replay or serve multiple waiters.
+            producer_event.record(torch.npu.current_stream())
+            attn_metadata.reshape_cache_event = producer_event
             request_ids = attn_metadata.decode_request_ids_compact
             if request_ids is None:
                 raise RuntimeError("staged SFA request ids are unavailable")
