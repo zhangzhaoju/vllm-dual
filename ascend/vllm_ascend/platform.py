@@ -562,7 +562,9 @@ class NPUPlatform(Platform):
         global _CUSTOM_OP_REGISTERED
         if _CUSTOM_OP_REGISTERED:
             return
-        CUR_DIR = os.path.dirname(os.path.realpath(__file__))
+        # Strict editable installs collocate resources with linked Python files.
+        # Resolving the symlink would incorrectly return to the raw source tree.
+        CUR_DIR = os.path.dirname(os.path.abspath(__file__))
         CUSTOM_OPP_PATH = os.path.join(CUR_DIR, "_cann_ops_custom", "vendors", "vllm-ascend")
         if os.path.exists(CUSTOM_OPP_PATH):
             current_cust_opp_path = os.environ.get("ASCEND_CUSTOM_OPP_PATH", "")

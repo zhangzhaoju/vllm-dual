@@ -19,11 +19,14 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import tempfile
 from importlib import metadata
 from pathlib import Path
+from uuid import uuid4
 
 # Third Party
 from setuptools import Extension, find_packages
+from setuptools.command.build import build
 from setuptools.command.build_ext import build_ext
 from setuptools.command.build_py import build_py
 from setuptools.command.editable_wheel import editable_wheel
@@ -38,18 +41,12 @@ MATERIALS = {
 }
 
 
-def verify_materials(primary: str) -> dict:
-    """Check every material file, including builds from an sdist without .git."""
-    relative, commit = MATERIALS[primary]
-    manifest = ROOT / "ascend/submodule-materials.json"
-    if not manifest.is_file():
-        raise RuntimeError("Run the supplied intranet materialize_submodules.py first")
-    expected = json.loads(manifest.read_text())
-    if expected.get("commit") != commit or expected.get("path") != relative:
-        raise RuntimeError("Submodule material does not match the pinned commit")
-    directory = ROOT / "ascend" / relative
+def material_inventory(directory: Path) -> dict:
+    """Hash material payload files; exclude only the top-level Git control entry."""
     actual = {}
     for path in sorted(directory.rglob("*")):
+        if path.relative_to(directory).parts[0] == ".git":
+            continue
         if path.is_symlink():
             link = str(path.readlink())
             if not path.resolve().is_relative_to(directory.resolve()):
@@ -62,6 +59,19 @@ def verify_materials(primary: str) -> dict:
         else:
             continue
         actual[str(path.relative_to(directory))] = {"sha256": sha, "symlink": link}
+    return actual
+
+
+def verify_materials(primary: str) -> dict:
+    """Check every material file, including builds from an sdist without .git."""
+    relative, commit = MATERIALS[primary]
+    manifest = ROOT / "ascend/submodule-materials.json"
+    if not manifest.is_file():
+        raise RuntimeError("Run python -B p1_dev.py materials --help first")
+    expected = json.loads(manifest.read_text())
+    if expected.get("commit") != commit or expected.get("path") != relative:
+        raise RuntimeError("Submodule material does not match the pinned commit")
+    actual = material_inventory(ROOT / "ascend" / relative)
     if not actual or actual != expected.get("files"):
         raise RuntimeError("Submodule payload is missing or changed; do not build")
     return {"path": relative, "commit": commit, "files": len(actual)}
@@ -193,8 +203,44 @@ def write_build_metadata(
     )
 
 
+def required_artifacts(primary: str, info: dict) -> dict[str, list[str]]:
+    """Return required native resources for the selected compiled feature set."""
+    if primary == "vllm":
+        return {
+            "vllm_ascend": [
+                "vllm_ascend_C*.so",
+                "libvllm_ascend_kernels.so",
+                "_cann_ops_custom/vendors/vllm-ascend/op_api/lib/*.so",
+            ]
+        }
+    channels = (
+        ["hixl_npu_comms*.so", "hcomm_onesided*.so"]
+        if info["use_hixl"]
+        else ["hccl_npu_comms*.so"]
+    )
+    host = ["native_storage_ops*.so", "lmcache_fs*.so", "lmcache_redis*.so"]
+    if info.get("build_mooncake", False):
+        host.append("lmcache_mooncake*.so")
+    return {
+        "lmcache_ascend": ["c_ops*.so", "libcache_kernels.so", *channels],
+        "lmcache": host,
+    }
+
+
+class P1Build(build):
+    """Give every wheel build a fresh Python/native staging namespace."""
+
+    def initialize_options(self) -> None:
+        """Choose a unique path without creating directories during metadata hooks."""
+        super().initialize_options()
+        self.build_base = str(ROOT / "build" / ("p1-" + uuid4().hex))
+
+
 class P1BuildPy(build_py):
-    def run(self):
+    def run(self) -> None:
+        """Copy wheel Python files, or let strict editable map them to source."""
+        if self.editable_mode:
+            return
         info = check_environment()
         super().run()
         primary = self.distribution.get_name()
@@ -205,16 +251,56 @@ class P1BuildPy(build_py):
 
 
 class P1EditableWheel(editable_wheel):
-    def run(self):
-        raise RuntimeError(
-            "P1 acceptance uses wheels, not editable installs. Build in the intranet "
-            "and install the paired wheels into an isolated validation container."
-        )
+    """Expose both namespaces and all native resources through a strict link tree."""
+
+    def run(self) -> None:
+        """Build a development installation; regular wheels remain the exit gate."""
+        if self.mode not in (None, "strict"):
+            raise RuntimeError("P1 editable installs require editable_mode=strict")
+        self.mode = "strict"
+        super().run()
 
 
 class P1BuildExt(build_ext):
-    def run(self):
+    def initialize_options(self) -> None:
+        """Initialize the complete native resource mapping used by PEP 660."""
+        super().initialize_options()
+        self.native_output_mapping = {}
+
+    def get_outputs(self) -> list[str]:
+        """Report all generated files, including host libraries and CANN resources."""
+        return sorted(self.native_output_mapping) or super().get_outputs()
+
+    def get_output_mapping(self) -> dict[str, str]:
+        """Map strict-editable outputs to persistent, successful build artifacts."""
+        return dict(self.native_output_mapping) if self.editable_mode else {}
+
+    def publish_outputs(self, staging: Path) -> None:
+        """Copy wheel artifacts or map editable files without changing source files."""
+        build_lib = Path(self.build_lib).resolve()
+        mapping = {}
+        for source in sorted(staging.rglob("*")):
+            if not source.is_file():
+                continue
+            if not source.resolve().is_relative_to(staging.resolve()):
+                raise RuntimeError(
+                    f"Native artifact escapes its staging tree: {source}"
+                )
+            destination = build_lib / source.relative_to(staging)
+            if not self.editable_mode:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            mapping[str(destination)] = str(source)
+        self.native_output_mapping = mapping
+
+    def run(self) -> None:
+        """Compile into a fresh retained directory; publish only validated outputs."""
         info = check_environment()
+        jobs = int(os.environ.get("MAX_JOBS", str(os.cpu_count() or 1)))
+        if jobs < 1:
+            raise RuntimeError("MAX_JOBS must be positive")
+        if self.inplace and not self.editable_mode:
+            raise RuntimeError("Use pip install -e . instead of build_ext --inplace")
         primary = self.distribution.get_name()
         addon = primary + "_ascend"
         info["submodule"] = verify_materials(primary)
@@ -230,10 +316,13 @@ class P1BuildExt(build_ext):
             raise RuntimeError(
                 f"Missing pinned submodule material: {needed}; no automatic fetch"
             )
-        build_dir = Path(self.build_temp).resolve() / "ascend"
-        build_dir.mkdir(parents=True, exist_ok=True)
-        build_lib = Path(self.build_lib).resolve()
-        package_dir = build_lib / addon
+        # Retain failure diagnostics even when pip removes its temporary build dir.
+        native_runs = ROOT / "build/p1-native"
+        native_runs.mkdir(parents=True, exist_ok=True)
+        build_dir = Path(tempfile.mkdtemp(prefix="run-", dir=native_runs))
+        print(f"[P1] Fresh native build directory: {build_dir}", flush=True)
+        staging = build_dir / "install"
+        package_dir = staging / addon
         package_dir.mkdir(parents=True, exist_ok=True)
         pybind = subprocess.check_output(
             [sys.executable, "-B", "-m", "pybind11", "--cmakedir"], text=True
@@ -308,49 +397,37 @@ class P1BuildExt(build_ext):
                     "-DUSE_MINDSPORE=OFF",
                     f"-DUSE_HIXL={flag}",
                     f"-DUSE_HCOMM_ONESIDED={flag}",
-                    f"-DP1_HOST_INSTALL_DIR={build_lib / primary}",
+                    f"-DP1_HOST_INSTALL_DIR={staging / primary}",
                 ]
             )
             mooncake = os.environ.get("BUILD_MOONCAKE", "0")
             if mooncake not in ("0", "1"):
                 raise RuntimeError("BUILD_MOONCAKE must be 0 or 1")
+            info["build_mooncake"] = mooncake == "1"
             args.append(f"-DBUILD_MOONCAKE={'ON' if mooncake == '1' else 'OFF'}")
             for key in ("MOONCAKE_INCLUDE_DIR", "MOONCAKE_LIB_DIR"):
                 if os.environ.get(key):
                     args.append(f"-D{key}={os.environ[key]}")
         subprocess.run(args, check=True)
-        jobs = int(os.environ.get("MAX_JOBS", str(os.cpu_count() or 1)))
-        if jobs < 1:
-            raise RuntimeError("MAX_JOBS must be positive")
         subprocess.run(
-            ["cmake", "--build", str(build_dir), "--parallel", str(jobs)], check=True
+            ["cmake", "--build", str(build_dir), "--parallel", str(jobs), "--verbose"],
+            check=True,
         )
         subprocess.run(["cmake", "--install", str(build_dir)], check=True)
-        required = (
-            ["vllm_ascend_C*.so", "libvllm_ascend_kernels.so"]
-            if primary == "vllm"
-            else ["c_ops*.so", "libcache_kernels.so"]
-            + (
-                ["hixl_npu_comms*.so", "hcomm_onesided*.so"]
-                if info["use_hixl"]
-                else ["hccl_npu_comms*.so"]
-            )
-        )
-        for pattern in required:
-            if not list(package_dir.glob(pattern)):
-                raise RuntimeError(
-                    f"Required native artifact not installed: {addon}/{pattern}"
-                )
-        if primary == "lmcache":
-            host_names = ["native_storage_ops", "lmcache_fs", "lmcache_redis"]
-            if os.environ.get("BUILD_MOONCAKE") == "1":
-                host_names.append("lmcache_mooncake")
-            for name in host_names:
-                if not list((build_lib / primary).glob(name + "*.so")):
-                    raise RuntimeError(f"Required host extension missing: {name}")
+        for namespace, patterns in required_artifacts(primary, info).items():
+            for pattern in patterns:
+                if not any(
+                    path.is_file() for path in (staging / namespace).glob(pattern)
+                ):
+                    raise RuntimeError(
+                        f"Required native artifact not installed: {namespace}/{pattern}"
+                    )
+        info["build_directory"] = str(build_dir)
+        info["install_mode"] = "strict-editable" if self.editable_mode else "wheel"
         write_build_metadata(
-            build_lib, primary, addon, self.distribution.get_version(), info
+            staging, primary, addon, self.distribution.get_version(), info
         )
+        self.publish_outputs(staging)
 
 
 def setup_arguments(primary: str) -> dict:
@@ -378,6 +455,7 @@ def setup_arguments(primary: str) -> dict:
         },
         "ext_modules": [Extension(f"{addon}.{module}", sources=[])],
         "cmdclass": {
+            "build": P1Build,
             "build_ext": P1BuildExt,
             "build_py": P1BuildPy,
             "editable_wheel": P1EditableWheel,

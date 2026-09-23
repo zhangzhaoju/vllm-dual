@@ -1,4 +1,7 @@
 <!-- markdownlint-disable MD001 MD041 -->
+
+> P1 Ascend-only fork: use the [P1 build/install guide](docs/getting_started/installation/ascend_p1.md)
+> and `python -B p1_dev.py --help`. Upstream GPU/pip instructions below are not the P1 entry point.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/assets/logos/vllm-logo-text-dark.png">

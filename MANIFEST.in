@@ -1,4 +1,4 @@
-include LICENSE README.md pyproject.toml setup.py p1_build.py CMakeLists.txt .gitmodules
+include LICENSE README.md pyproject.toml setup.py p1_build.py p1_dev.py CMakeLists.txt .gitmodules
 include requirements/ascend.txt requirements/build.txt
 graft vllm
 graft ascend
