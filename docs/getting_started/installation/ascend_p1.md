@@ -8,7 +8,9 @@ Native build/install validation must run in the intranet candidate environment.
 
 Use a dedicated container, not an active baseline service: aarch64, Python 3.11,
 Ascend910B3, CANN 8.5.1, torch 2.9.0, torch_npu
-`2.9.0.post1+gitee7ba04`, triton-ascend `3.2.0.dev20260322`.
+`2.9.0.post2`, Transformers `5.2.0`, triton-ascend `3.2.0.dev20260322`.
+The NPU/Transformers pins follow the reported intranet installation; metadata
+acceptance does not establish Transformers 5 runtime or native ABI compatibility.
 Prepare `requirements/build.txt` and `requirements/ascend.txt` from approved
 materials without replacing the existing torch candidate.
 

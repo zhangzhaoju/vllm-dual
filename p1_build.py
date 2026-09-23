@@ -33,7 +33,7 @@ from setuptools.command.editable_wheel import editable_wheel
 
 ROOT = Path(__file__).resolve().parent
 TORCH_VERSION = "2.9.0"
-TORCH_NPU_VERSION = "2.9.0.post1+gitee7ba04"
+TORCH_NPU_VERSION = "2.9.0.post2"
 TRITON_VERSION = "3.2.0.dev20260322"
 MATERIALS = {
     "vllm": ("csrc/third_party/catlass", "716fd7baa7fb7f6cac0488bb628fd1dd0e875641"),
