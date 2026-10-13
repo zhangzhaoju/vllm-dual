@@ -1,5 +1,5 @@
 # Focused P4 host and native regression tooling.
-pytest>=9,<10
+pytest>=9.1.1,<10
 pytest-asyncio
 numpy==1.26.4
 msgspec
