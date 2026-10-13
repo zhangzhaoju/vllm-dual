@@ -1,7 +1,7 @@
 # Focused P4 host and native regression tooling.
 pytest>=9,<10
 pytest-asyncio
-numpy==1.26.4
+numpy==2.4.6
 msgspec
 pyzmq
 pydantic>=2.12.0
