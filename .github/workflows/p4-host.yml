@@ -14,11 +14,11 @@ jobs:
       run:
         working-directory: vllm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: vllm
           fetch-depth: 0
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: zhangzhaoju/LMCache-dual
           ref: p6
