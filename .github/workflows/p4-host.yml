@@ -24,7 +24,7 @@ jobs:
           ref: p6
           path: LMCache
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Host-only dependencies (no torch or CANN)
