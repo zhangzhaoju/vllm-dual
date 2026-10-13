@@ -48,7 +48,7 @@ opentelemetry-semantic-conventions-ai >= 0.4.1
 numpy==1.26.4
 transformers==5.2.0
 fastapi[standard]>=0.115.0,<0.124.0
-xgrammar>=0.1.32,<1.0.0
+xgrammar>=0.2.8,<1.0.0
 torch==2.9.0
 torch-npu==2.9.0.post2
 triton-ascend==3.2.0.dev20260322
